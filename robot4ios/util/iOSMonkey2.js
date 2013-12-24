@@ -1,67 +1,109 @@
-/*
- *
- *
- */
-
 function iOSMonkey2(){
 
 	this.elementArray = null;
+	this.history = {};
 
-	this._addToArray = function(root,len){
-		var rootname = root.name()+""
-		rootname = rootname.toLowerCase();
-		if( !this._isIndicator(root) && root.toString() != "[object UIAKey]" && rootname.match("notap"+"$") !="notap" ){
-			if(root.isEnabled() && root.isVisible()){
-				if(len==0){
-					if(root.hitpoint() != null){
-						var rect = root.hitpoint();
-						if(rect.y>20){
-							this.elementArray.push(root);
-						}
-					}
-				}
-				if(this._toFlick(root) || this._toType(root)){
-					this.elementArray.push(root);
-				}
-			}
+	this._findHistory = function(element){
+		var key = this._getElementAncestry(element)+element.toString()+element.name()+element.value()+element.label();
+
+		if (this.history[key]){
+			this.history[key] = (this.history[key] + 1) % 4;
+			return this.history[key]?true:false;
 		}
+		else{
+			UIALogger.logWarning("new key: "+key);
+			this.history[key] = 1;
+			return false;
+		}
+	}
+
+	this._sameElement = function(e1, e2){
+		while(e1 && e1.isValid() && e2 && e2.isValid()){
+			if(e1.toString() !== e2.toString() ||
+				e1.name() !== e2.name() ||
+				e1.value() !== e2.value() ||
+				e1.label() !== e2.label())
+				return false;
+			e1 = e1.parent();
+			e2 = e2.parent();
+		}
+
+		return true;
+	}
+
+	this._addToArray = function(root, childLen){
+		var name = root.name();
+		if (name && name.match("notap$") ||
+			this._isIndicator(root) ||
+			root.toString() == "[object UIAKey]" ||
+			!root.isEnabled() ||
+			!root.isVisible())
+			return;
+
+		if(childLen == 0){
+			var rect = root.hitpoint();
+			if(rect && rect.y > 20){
+				this.elementArray.push(root);
+			}
+		} 
+		else if(this._toFlick(root) || this._toType(root)){
+			this.elementArray.push(root);
+		}
+
 	}
 
 	this._iterator = function(root){
-		var eleArray = null;
-		if(root.toString() !="[object UIAWebView]" && root.toString() != "[object UIAKeyboard]"){
-			eleArray = root.elements();
-			this._addToArray(root,eleArray.length);
+		var className = root.toString();
+		if(className =="[object UIAWebView]" || className == "[object UIAKeyboard]")
+			return;
 
-			if(eleArray.length != 0 && eleArray != null){
-				for(var i = 0; i< eleArray.length; i++){
-					this._iterator(eleArray[i]);
-				}
+		var eleArray = root.elements();
+		this._addToArray(root,eleArray.length);
+
+		for(var i = 0; i< eleArray.length; i++){
+			this._iterator(eleArray[i]);
+		}
+	}
+
+	this._tryLogin = function(usr, psw){
+		UIATarget.localTarget().pushTimeout(0.001);
+		var ret = true;
+		var app = UIATarget.localTarget().frontMostApp();
+		var mainWindow = UIATarget.localTarget().frontMostApp().mainWindow();
+		var tableView = mainWindow.tableViews().firstWithPredicate("isEnabled == 1");
+
+		if(mainWindow.buttons()["登录"].isValid() &&
+		   tableView.isValid() &&
+		   tableView.cells()[0].textFields().isValid() &&
+		   tableView.cells()[0].secureTextFields().isValid()){
+			
+			tableView.cells()[0].textFields()[0].setValue(usr);
+			tableView.cells()[0].secureTextFields()[0].setValue(psw);
+			mainWindow.buttons()["登录"].tap();
+			//delay 4 second to handle any possible alerts
+			UIATarget.localTarget().delay(4);
+			if(mainWindow.buttons()["登录"].isValid() &&
+				mainWindow.buttons()["取消"].isValid()){
+				mainWindow.buttons()["取消"].tap();
+				ret = false;
 			}
 		}
+		UIATarget.localTarget().popTimeout();
+		return ret;
 	}
 
 	this._isIndicator = function(element){
-		return element.toString().match("Indicator"+"$")=="Indicator";
+		return element.toString().match("Indicator]$")=="Indicator]";
 	}
 
 	this._findIndicator = function(root){
-		var elements = root.elements();
-		if(elements.length !=0 && elements != null){
-			for(var i =0; i<elements.length;i++){
-				if(this._isIndicator(elements[i])){
-					return 1;
-				}
-				this._findIndicator(elements[i]);
-			}
-		}
-	}
+		if(!root.isValid() || !root.isVisible()) return 0;
 
-	this._getAllElements = function(){
-		var app = UIATarget.localTarget().frontMostApp();
-		this.elementArray = null;
-		this.elementArray = new Array();
-		this._iterator(app);
+		var elements = root.elements();
+		for(var i =0; i<elements.length; i++){
+			return this._isIndicator(elements[i])?
+				true : this._findIndicator(elements[i]);
+		}
 	}
 
 	this._getElementAncestry = function(element){
@@ -74,14 +116,19 @@ function iOSMonkey2(){
 	}
 
 	this._selector = function(){
-		this._getAllElements();
+		this.elementArray = new Array();
+		this._iterator(UIATarget.localTarget().frontMostApp());
+
 		var len = this.elementArray.length;
-		//UIALogger.logMessage(len+"");
-		var random = Math.round(Math.random() * len);
-		if (random == len){
-			random = random-1;
+		if (!len) throw 'no UI element!!!!';
+
+		var position = Math.floor(Math.random()*len);
+		while(this._findHistory(this.elementArray[position])){
+			position = Math.floor(Math.random()*len);
 		}
-		return this.elementArray[random];
+
+		//UIALogger.logMessage(len+"");
+		return this.elementArray[position];
 	}
 
 	this._toFlick = function(element){
@@ -104,9 +151,10 @@ function iOSMonkey2(){
 				element.setValue(this._falseString(element.value()));
 			}
 		}else{
-			var x = Math.random().toFixed(2);
-			var y = Math.random().toFixed(2);
-			element.tapWithOptions({tapOffset:{x:x,y:y}});
+			//var x = Math.random().toFixed(2);
+			//var y = Math.random().toFixed(2);
+			//element.tapWithOptions({tapOffset:{x:x,y:y}});
+			element.tap();
 		}
 
 	}
@@ -119,11 +167,6 @@ function iOSMonkey2(){
 		element.flickInsideWithOptions({startOffset:{x:0.5, y:0.5}, endOffset:{x:x,y:y}});
 	}
 
-	this._getAppSize = function(){
-		var rect = UIATarget.localTarget().frontMostApp().rect();
-		return rect;
-	}
-
 	this._type = function(element){
 		var len = Math.round(Math.random()*100);
 		var value = this._randomChar(len);
@@ -131,11 +174,7 @@ function iOSMonkey2(){
 	}
 
 	this._falseString = function(value){
-		if(value=="0"){
-			return "1";
-		}else{
-			return "0";
-		}
+		return (value=="0")?"1":"0";
 	}
 
 	this._randomChar = function(len){
@@ -150,7 +189,9 @@ function iOSMonkey2(){
 
 	this.operator = function(){
 		var element = this._selector();
-		UIALogger.logMessage("本次操作的对象的类型是："+element.toString());
+		if(!element || !element.isValid()) return;
+		//UIALogger.logMessage("本次操作的对象的类型是："+element.toString());
+		element.logElementTree();
 		var ancestry = this. _getElementAncestry(element);
 		UIALogger.logMessage(ancestry+element.toString()+"->name:"+element.name());
 		if (this._toFlick(element)){
@@ -162,7 +203,6 @@ function iOSMonkey2(){
 				this._tap(element);
 			}
 		}
-
 	}
 
 	this.screenShoot = function(imageName){
@@ -173,42 +213,41 @@ function iOSMonkey2(){
 
 	this.waitForLoad = function(preDelay) {        
 		var target = UIATarget.localTarget();
-		if (!preDelay) {
-			target.delay(0);
-		}
-		else {
-			target.delay(preDelay);
-		}
+		target.delay(preDelay?preDelay:0);
 
-		var done = false;
-		var counter = 0;      
-		while ((!done) && (counter < 60)) {
-			var progressIndicator = UIATarget.localTarget().frontMostApp().windows()[0].activityIndicators()[0];
-			var indicator = this._findIndicator(UIATarget.localTarget().frontMostApp());
-			if (indicator == 1) {
-				UIALogger.logMessage("来到这里等待一下")
+		this._tryLogin(userName, passWord);
+
+		var counter = 60;
+		while(counter--){
+			if(this._findIndicator(target.frontMostApp())){
+				UIALogger.logMessage("loading contents...");
 				target.delay(0.5);
-				counter++;  
 			}
-			else {
-				done = true;           
+			else{
+				break;
 			}
 		}
-		target.delay(0.5);
+		//target.delay(0.5);
 	}
-
 }
 
-mon = new iOSMonkey2();
-UIATarget.localTarget().setTimeout(0);
-for(var i = 0; i< 1000; i++){
+var mon = new iOSMonkey2();
+var userName = 'mtlonline'+(Math.floor(Math.random()*300)+340);
+var passWord = 'ALIhjsdmn1314';
+var localTarget = UIATarget.localTarget();
+var bundleId = localTarget.frontMostApp().bundleID();
+
+localTarget.pushTimeout(0);
+var startButton = localTarget.frontMostApp().mainWindow().scrollViews()[0].buttons()[0];
+if(startButton.isValid()) startButton.scrollToVisible();
+for(var i = 0; i< 1000000; i++){
 	try{
-	mon.operator();
+		mon.operator();
 	}catch(err){
-		UIALogger.logMessage("这里有一个异常");
+		UIALogger.logError("这里有一个异常");
 		UIALogger.logMessage(err.toString()+"");
 	}
-	mon.screenShoot("test");
-	mon.waitForLoad(1);
-	//UIATarget.localTarget().delay(2);
+	//mon.screenShoot("test");
+	mon.waitForLoad(0.5);
 }
+localTarget.popTimeout();
